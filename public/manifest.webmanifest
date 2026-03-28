@@ -1,0 +1,21 @@
+{
+  "name": "alcohol-pwa",
+  "short_name": "alcohol-pwa",
+  "description": "飲酒量と残アルコール量の簡易確認アプリ",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f8fafc",
+  "theme_color": "#111827",
+  "icons": [
+    {
+      "src": "/icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
