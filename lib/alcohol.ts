@@ -96,6 +96,29 @@ export function estimateBac(remainingG: number, weightKg: number, sex: Sex) {
   return Math.max(0, bac);
 }
 
+/**
+ * 日付文字列を YYYY/MM/DD(曜) 形式で返す
+ * 例: 2026-04-04 -> 2026/04/04(土)
+ */
+export function formatDateWithDay(dateStr: string) {
+  if (!dateStr) return "----/--/--(-)";
+
+  const date = new Date(dateStr);
+
+  if (Number.isNaN(date.getTime())) {
+    return dateStr;
+  }
+
+  const days = ["日", "月", "火", "水", "木", "金", "土"];
+
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const day = days[date.getDay()];
+
+  return `${y}/${m}/${d}(${day})`;
+}
+
 export function calculateAlcoholSummary(state: AppState): AlcoholSummary {
   const drinks = state.drinks.map((drink) => ({
     ...drink,

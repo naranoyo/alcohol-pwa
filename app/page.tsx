@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "@/lib/state";
-import { calculateAlcoholSummary } from "@/lib/alcohol";
+import { calculateAlcoholSummary, formatDateWithDay } from "@/lib/alcohol";
 
 type PresetDrink = {
   name: string;
@@ -70,13 +70,65 @@ const DRINK_CATEGORIES: DrinkCategory[] = [
   },
 ];
 
+type PresetOption = {
+  value: string;
+  label: string;
+  preset: PresetDrink;
+};
+
 function numberValue(value: string) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
 }
 
+function intValueFromText(value: string) {
+  const onlyDigits = value.replace(/[^\d]/g, "");
+  if (!onlyDigits) return 0;
+  return Number(onlyDigits);
+}
+
+function normalizeDateForInput(value: string) {
+  if (!value) return "";
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return value;
+  }
+
+  const match = value.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  if (!match) return "";
+
+  const [, y, m, d] = match;
+
+  return `${y}-${String(Number(m)).padStart(2, "0")}-${String(
+    Number(d)
+  ).padStart(2, "0")}`;
+}
+
 function presetLabel(item: PresetDrink) {
   return `${item.name} (${item.volumeMl}ml / ${item.abv}%)`;
+}
+
+function presetValue(item: PresetDrink) {
+  return `${item.name}__${item.volumeMl}__${item.abv}`;
+}
+
+function getAllPresetOptions(): PresetOption[] {
+  return DRINK_CATEGORIES.flatMap((category) =>
+    category.items.map((item) => ({
+      value: presetValue(item),
+      label: presetLabel(item),
+      preset: item,
+    }))
+  );
+}
+
+function findPresetByDrinkValues(name: string, volumeMl: number, abv: number) {
+  return (
+    DRINK_CATEGORIES.flatMap((category) => category.items).find(
+      (item) =>
+        item.name === name && item.volumeMl === volumeMl && item.abv === abv
+    ) ?? null
+  );
 }
 
 function formatDateTime(value: string) {
@@ -87,19 +139,39 @@ function formatDateTime(value: string) {
   }
 }
 
-function formatTimeOnly(value: Date) {
+function formatTimeOnly(value: Date | null) {
+  if (!value) return "--:--";
+
   return value.toLocaleTimeString("ja-JP", {
     hour: "2-digit",
     minute: "2-digit",
   });
 }
 
-function formatClock(value: Date) {
-  return value.toLocaleTimeString("ja-JP", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+function formatClock(value: Date | null) {
+  if (!value) return "--:--:--";
+
+  const hh = String(value.getHours()).padStart(2, "0");
+  const mm = String(value.getMinutes()).padStart(2, "0");
+  const ss = String(value.getSeconds()).padStart(2, "0");
+
+  return `${hh}:${mm}:${ss}`;
+}
+
+function formatDateWithWeekday(value: Date | null) {
+  if (!value) return "----/--/-- (-)";
+
+  return value.toLocaleDateString("ja-JP", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    weekday: "short",
   });
+}
+
+function formatDateDisplay(value: string) {
+  if (!value) return "----/--/--";
+  return value.replaceAll("-", "/");
 }
 
 function parseTimeToDate(base: Date, time: string) {
@@ -206,10 +278,44 @@ function getHistoryToneByRemaining(remainingNowG: number) {
 export default function Page() {
   const { state, dispatch } = useApp();
 
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
+
+  const [activeCategory, setActiveCategory] = useState<string>(
+    DRINK_CATEGORIES[0].key
+  );
+  const [expandedPresetCategory, setExpandedPresetCategory] = useState<
+    string | null
+  >(null);
+  const [now, setNow] = useState<Date | null>(null);
+
+  useEffect(() => {
+    const tick = () => {
+      setNow(new Date());
+    };
+
+    tick();
+    const id = window.setInterval(tick, 1000);
+
+    return () => window.clearInterval(id);
+  }, []);
+
+  const safeNow = useMemo(() => now ?? new Date(), [now]);
+
   const lockedDrinks = useMemo(
     () => state.drinks.filter((drink) => drink.locked),
     [state.drinks]
   );
+
+  const currentEditingDrink = useMemo(
+    () => state.drinks.find((drink) => !drink.locked) ?? null,
+    [state.drinks]
+  );
+
+  const displayDrinks = useMemo(() => {
+    return currentEditingDrink
+      ? [...lockedDrinks, currentEditingDrink]
+      : lockedDrinks;
+  }, [lockedDrinks, currentEditingDrink]);
 
   const summaryState = useMemo(
     () => ({
@@ -224,26 +330,23 @@ export default function Page() {
     [summaryState]
   );
 
-  const [activeCategory, setActiveCategory] = useState<string>(
-    DRINK_CATEGORIES[0].key
-  );
-  const [now, setNow] = useState(() => new Date());
-
-  useEffect(() => {
-    const id = window.setInterval(() => {
-      setNow(new Date());
-    }, 1000);
-
-    return () => window.clearInterval(id);
-  }, []);
-
   const activePresetItems =
     DRINK_CATEGORIES.find((category) => category.key === activeCategory)
       ?.items ?? [];
 
+  const allPresetOptions = useMemo(() => {
+    return getAllPresetOptions();
+  }, []);
+
+  const isPresetExpanded = expandedPresetCategory === activeCategory;
+
+  const visiblePresetItems = isPresetExpanded
+    ? activePresetItems
+    : activePresetItems.slice(0, 4);
+
   const liveElapsedAfterEnd = useMemo(() => {
-    return calcElapsedAfterEndByClock(state.startTime, state.endTime, now);
-  }, [state.startTime, state.endTime, now]);
+    return calcElapsedAfterEndByClock(state.startTime, state.endTime, safeNow);
+  }, [state.startTime, state.endTime, safeNow]);
 
   const liveRemainingNowG = useMemo(() => {
     return calcRemainingNowByClock(
@@ -251,14 +354,14 @@ export default function Page() {
       summary.metabolismGPerHour,
       state.startTime,
       state.endTime,
-      now
+      safeNow
     );
   }, [
     summary.remainingAtEndG,
     summary.metabolismGPerHour,
     state.startTime,
     state.endTime,
-    now,
+    safeNow,
   ]);
 
   const liveEstimatedBac = useMemo(() => {
@@ -275,14 +378,14 @@ export default function Page() {
       summary.metabolismGPerHour,
       state.startTime,
       state.endTime,
-      now
+      safeNow
     );
   }, [
     summary.remainingAtEndG,
     summary.metabolismGPerHour,
     state.startTime,
     state.endTime,
-    now,
+    safeNow,
   ]);
 
   const liveHoursToZero = useMemo(() => {
@@ -290,12 +393,99 @@ export default function Page() {
     return Number((liveRemainingNowG / summary.metabolismGPerHour).toFixed(1));
   }, [liveRemainingNowG, summary.metabolismGPerHour]);
 
+  const canSaveHistory = lockedDrinks.length > 0;
+
+  const currentRemainingLabelDate = useMemo(() => {
+    return now ? formatDateWithWeekday(now) : "----/--/-- (-)";
+  }, [now]);
+
+  const zeroAtLabelDate = useMemo(() => {
+    return zeroAtLive ? formatDateWithWeekday(zeroAtLive) : "----/--/-- (-)";
+  }, [zeroAtLive]);
+
+  const handleAddDrink = () => {
+    if (currentEditingDrink) return;
+    dispatch({ type: "ADD_DRINK" });
+  };
+
+  const handleApplyPreset = (item: PresetDrink) => {
+    if (!currentEditingDrink) return;
+
+    dispatch({
+      type: "UPDATE_DRINK",
+      payload: {
+        id: currentEditingDrink.id,
+        field: "name",
+        value: item.name,
+      },
+    });
+    dispatch({
+      type: "UPDATE_DRINK",
+      payload: {
+        id: currentEditingDrink.id,
+        field: "volumeMl",
+        value: item.volumeMl,
+      },
+    });
+    dispatch({
+      type: "UPDATE_DRINK",
+      payload: {
+        id: currentEditingDrink.id,
+        field: "abv",
+        value: item.abv,
+      },
+    });
+    dispatch({
+      type: "UPDATE_DRINK",
+      payload: {
+        id: currentEditingDrink.id,
+        field: "count",
+        value: 1,
+      },
+    });
+  };
+
+  const handleSelectPreset = (drinkId: string, selectedValue: string) => {
+    const selected = allPresetOptions.find(
+      (option) => option.value === selectedValue
+    );
+    if (!selected) return;
+
+    dispatch({
+      type: "UPDATE_DRINK",
+      payload: {
+        id: drinkId,
+        field: "name",
+        value: selected.preset.name,
+      },
+    });
+    dispatch({
+      type: "UPDATE_DRINK",
+      payload: {
+        id: drinkId,
+        field: "volumeMl",
+        value: selected.preset.volumeMl,
+      },
+    });
+    dispatch({
+      type: "UPDATE_DRINK",
+      payload: {
+        id: drinkId,
+        field: "abv",
+        value: selected.preset.abv,
+      },
+    });
+  };
+
   const handleSaveHistory = () => {
+    if (!canSaveHistory) return;
+
     dispatch({
       type: "ADD_HISTORY",
       payload: {
         id: crypto.randomUUID(),
         createdAt: new Date().toISOString(),
+        date: state.date,
         weightKg: state.weightKg,
         sex: state.sex,
         startTime: state.startTime,
@@ -326,8 +516,8 @@ export default function Page() {
         <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <h2 className="text-lg font-bold">基本情報</h2>
 
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
-            <label className="grid gap-2 sm:col-span-2">
+          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <label className="grid gap-2 sm:col-span-2 lg:col-span-3">
               <span className="text-sm font-medium text-slate-700">
                 体重: {state.weightKg} kg
               </span>
@@ -381,6 +571,39 @@ export default function Page() {
             </label>
 
             <label className="grid gap-2">
+              <span className="text-sm font-medium text-slate-700">日付</span>
+
+              <div className="relative">
+                <button
+                  type="button"
+                  onClick={() => dateInputRef.current?.showPicker?.()}
+                  className="flex w-full items-center justify-between rounded-2xl border border-slate-300 bg-white px-4 py-3 text-left outline-none hover:border-slate-500"
+                >
+                  <span className="text-slate-900">
+                    {formatDateWithDay(state.date)}
+                  </span>
+                  <span className="text-xl leading-none">📅</span>
+                </button>
+
+                <input
+                  ref={dateInputRef}
+                  type="date"
+                  value={normalizeDateForInput(state.date)}
+                  onChange={(e) =>
+                    dispatch({
+                      type: "SET_DATE",
+                      payload: e.target.value,
+                    })
+                  }
+                  className="pointer-events-none absolute inset-0 opacity-0"
+                  tabIndex={-1}
+                />
+              </div>
+            </label>
+
+            <div className="hidden lg:block" />
+
+            <label className="grid gap-2">
               <span className="text-sm font-medium text-slate-700">
                 開始時刻
               </span>
@@ -414,7 +637,7 @@ export default function Page() {
               />
             </label>
 
-            <label className="grid gap-2 sm:col-span-2">
+            <label className="grid gap-2">
               <span className="text-sm font-medium text-slate-700">
                 飲み終わってからの経過時間(時間)
               </span>
@@ -441,8 +664,13 @@ export default function Page() {
             <h2 className="text-lg font-bold">飲んだお酒</h2>
             <button
               type="button"
-              onClick={() => dispatch({ type: "ADD_DRINK" })}
-              className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              onClick={handleAddDrink}
+              disabled={!!currentEditingDrink}
+              className={`rounded-2xl px-4 py-2 text-sm font-medium ${
+                currentEditingDrink
+                  ? "cursor-not-allowed bg-slate-300 text-white"
+                  : "bg-blue-600 text-white hover:bg-blue-700"
+              }`}
             >
               追加
             </button>
@@ -472,249 +700,306 @@ export default function Page() {
             <p className="mb-3 text-sm font-medium text-slate-700">
               プリセット
             </p>
+
             <div className="flex flex-wrap gap-2">
-              {activePresetItems.map((item) => (
+              {visiblePresetItems.map((item) => (
                 <button
                   key={`${activeCategory}-${item.name}-${item.volumeMl}-${item.abv}`}
                   type="button"
-                  onClick={() => {
-                    const targetDrink =
-                      [...state.drinks]
-                        .reverse()
-                        .find((drink) => !drink.locked) ?? null;
-
-                    if (!targetDrink) return;
-
-                    dispatch({
-                      type: "UPDATE_DRINK",
-                      payload: {
-                        id: targetDrink.id,
-                        field: "name",
-                        value: item.name,
-                      },
-                    });
-                    dispatch({
-                      type: "UPDATE_DRINK",
-                      payload: {
-                        id: targetDrink.id,
-                        field: "volumeMl",
-                        value: item.volumeMl,
-                      },
-                    });
-                    dispatch({
-                      type: "UPDATE_DRINK",
-                      payload: {
-                        id: targetDrink.id,
-                        field: "abv",
-                        value: item.abv,
-                      },
-                    });
-                    dispatch({
-                      type: "UPDATE_DRINK",
-                      payload: { id: targetDrink.id, field: "count", value: 1 },
-                    });
-                  }}
-                  className="rounded-full border border-blue-200 bg-blue-50 px-4 py-2 text-sm font-medium text-blue-700 hover:bg-blue-100"
+                  onClick={() => handleApplyPreset(item)}
+                  disabled={!currentEditingDrink}
+                  className={`rounded-full px-4 py-2 text-sm font-medium ${
+                    currentEditingDrink
+                      ? "border border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100"
+                      : "cursor-not-allowed border border-slate-200 bg-slate-100 text-slate-400"
+                  }`}
                 >
                   {presetLabel(item)}
                 </button>
               ))}
+
+              {activePresetItems.length > 4 ? (
+                <button
+                  type="button"
+                  onClick={() =>
+                    setExpandedPresetCategory((prev) =>
+                      prev === activeCategory ? null : activeCategory
+                    )
+                  }
+                  className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                >
+                  {isPresetExpanded
+                    ? "閉じる"
+                    : `さらに表示 (${activePresetItems.length - 4}件)`}
+                </button>
+              ) : null}
             </div>
 
-            {!state.drinks.some((drink) => !drink.locked) ? (
-              <p className="mt-3 text-sm text-amber-700">
-                すべて固定中です。新しく入力するには「追加」を押すか、「編集する」で解除してください。
+            {currentEditingDrink ? (
+              <p className="mt-3 text-sm text-blue-700">
+                入力中のお酒は 1 件だけです。固定すると次を追加できます。
               </p>
-            ) : null}
+            ) : (
+              <p className="mt-3 text-sm text-amber-700">
+                入力するには「追加」を押してください。
+              </p>
+            )}
           </div>
 
           <div className="mt-4 grid gap-4">
-            {state.drinks.map((drink, index) => (
-              <div
-                key={drink.id}
-                className={`rounded-3xl border p-4 ${
-                  drink.locked
-                    ? "border-amber-200 bg-amber-50/70"
-                    : "border-slate-200 bg-slate-50"
-                }`}
-              >
-                <div className="mb-3 flex items-center justify-between gap-3">
-                  <div className="flex items-center gap-2">
-                    <h3 className="font-semibold">#{index + 1}</h3>
-                    {drink.locked ? (
-                      <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
-                        固定中
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
-                        入力中
-                      </span>
-                    )}
-                  </div>
+            {displayDrinks.map((drink, displayIndex) => {
+              const lockedIndex = lockedDrinks.findIndex(
+                (d) => d.id === drink.id
+              );
+              const pureAlcoholG =
+                drink.locked && lockedIndex >= 0
+                  ? (summary.drinks[lockedIndex]?.pureAlcoholG ?? 0)
+                  : 0;
 
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        dispatch({
-                          type: "TOGGLE_DRINK_LOCK",
-                          payload: { id: drink.id },
-                        })
-                      }
-                      className={`rounded-2xl px-3 py-1.5 text-sm ${
-                        drink.locked
-                          ? "border border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
-                          : "border border-blue-300 bg-white text-blue-700 hover:bg-blue-50"
-                      }`}
-                    >
-                      {drink.locked ? "編集する" : "固定する"}
-                    </button>
+              const selectedPreset =
+                findPresetByDrinkValues(
+                  drink.name,
+                  drink.volumeMl,
+                  drink.abv
+                ) ?? null;
 
-                    <button
-                      type="button"
-                      onClick={() =>
-                        dispatch({
-                          type: "DELETE_DRINK",
-                          payload: { id: drink.id },
-                        })
-                      }
-                      className="rounded-2xl border border-red-300 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
-                    >
-                      削除
-                    </button>
-                  </div>
-                </div>
+              const selectedPresetValue = selectedPreset
+                ? presetValue(selectedPreset)
+                : "";
 
-                <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <label className="grid gap-2">
-                    <span className="text-sm font-medium text-slate-700">
-                      飲み物名
-                    </span>
-                    <input
-                      value={drink.name}
-                      disabled={drink.locked}
-                      onChange={(e) =>
-                        dispatch({
-                          type: "UPDATE_DRINK",
-                          payload: {
-                            id: drink.id,
-                            field: "name",
-                            value: e.target.value,
-                          },
-                        })
-                      }
-                      className={`rounded-2xl border px-4 py-3 outline-none ${
-                        drink.locked
-                          ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
-                          : "border-slate-300 bg-white focus:border-slate-500"
-                      }`}
-                    />
-                  </label>
-
-                  <label className="grid gap-2">
-                    <span className="text-sm font-medium text-slate-700">
-                      量(ml)
-                    </span>
-                    <input
-                      type="number"
-                      inputMode="numeric"
-                      min={0}
-                      step={1}
-                      value={drink.volumeMl}
-                      disabled={drink.locked}
-                      onChange={(e) =>
-                        dispatch({
-                          type: "UPDATE_DRINK",
-                          payload: {
-                            id: drink.id,
-                            field: "volumeMl",
-                            value:
-                              e.target.value === ""
-                                ? 0
-                                : Number(e.target.value),
-                          },
-                        })
-                      }
-                      className={`rounded-2xl border px-4 py-3 outline-none ${
-                        drink.locked
-                          ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
-                          : "border-slate-300 bg-white focus:border-slate-500"
-                      }`}
-                    />
-                  </label>
-
-                  <label className="grid gap-2">
-                    <span className="text-sm font-medium text-slate-700">
-                      度数(%)
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.1}
-                      value={drink.abv}
-                      disabled={drink.locked}
-                      onChange={(e) =>
-                        dispatch({
-                          type: "UPDATE_DRINK",
-                          payload: {
-                            id: drink.id,
-                            field: "abv",
-                            value: numberValue(e.target.value),
-                          },
-                        })
-                      }
-                      className={`rounded-2xl border px-4 py-3 outline-none ${
-                        drink.locked
-                          ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
-                          : "border-slate-300 bg-white focus:border-slate-500"
-                      }`}
-                    />
-                  </label>
-
-                  <label className="grid gap-2">
-                    <span className="text-sm font-medium text-slate-700">
-                      本数・杯数
-                    </span>
-                    <input
-                      type="number"
-                      min={0}
-                      step={1}
-                      value={drink.count}
-                      disabled={drink.locked}
-                      onChange={(e) =>
-                        dispatch({
-                          type: "UPDATE_DRINK",
-                          payload: {
-                            id: drink.id,
-                            field: "count",
-                            value: numberValue(e.target.value),
-                          },
-                        })
-                      }
-                      className={`rounded-2xl border px-4 py-3 outline-none ${
-                        drink.locked
-                          ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
-                          : "border-slate-300 bg-white focus:border-slate-500"
-                      }`}
-                    />
-                  </label>
-                </div>
-
-                <p
-                  className={`mt-3 text-sm ${
-                    drink.locked ? "text-amber-700" : "text-slate-600"
+              return (
+                <div
+                  key={drink.id}
+                  className={`rounded-3xl border p-4 ${
+                    drink.locked
+                      ? "border-amber-200 bg-amber-50/70"
+                      : "border-slate-200 bg-slate-50"
                   }`}
                 >
-                  このお酒の純アルコール量:{" "}
-                  <span className="font-semibold text-slate-900">
-                    {drink.locked
-                      ? (summary.drinks[index]?.pureAlcoholG ?? 0)
-                      : 0}{" "}
-                    g
-                  </span>
-                </p>
-              </div>
-            ))}
+                  <div className="mb-3 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <h3 className="font-semibold">#{displayIndex + 1}</h3>
+                      {drink.locked ? (
+                        <span className="rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-700">
+                          固定中
+                        </span>
+                      ) : (
+                        <span className="rounded-full bg-blue-100 px-2.5 py-1 text-xs font-medium text-blue-700">
+                          入力中
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatch({
+                            type: "TOGGLE_DRINK_LOCK",
+                            payload: { id: drink.id },
+                          })
+                        }
+                        className={`rounded-2xl px-3 py-1.5 text-sm ${
+                          drink.locked
+                            ? "border border-amber-300 bg-white text-amber-700 hover:bg-amber-50"
+                            : "border border-blue-300 bg-white text-blue-700 hover:bg-blue-50"
+                        }`}
+                      >
+                        {drink.locked ? "編集する" : "固定する"}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() =>
+                          dispatch({
+                            type: "DELETE_DRINK",
+                            payload: { id: drink.id },
+                          })
+                        }
+                        className="rounded-2xl border border-red-300 px-3 py-1.5 text-sm text-red-600 hover:bg-red-50"
+                      >
+                        削除
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-[1.2fr_0.8fr_0.8fr_0.9fr]">
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        飲み物名
+                      </span>
+
+                      <select
+                        value={selectedPresetValue}
+                        disabled={drink.locked}
+                        onChange={(e) =>
+                          handleSelectPreset(drink.id, e.target.value)
+                        }
+                        className={`rounded-2xl border px-4 py-3 outline-none ${
+                          drink.locked
+                            ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
+                            : "border-slate-300 bg-white focus:border-slate-500"
+                        }`}
+                      >
+                        {allPresetOptions.map((option) => (
+                          <option key={option.value} value={option.value}>
+                            {option.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        量(ml)
+                      </span>
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        min={0}
+                        step={10}
+                        value={drink.volumeMl}
+                        disabled={drink.locked}
+                        onChange={(e) =>
+                          dispatch({
+                            type: "UPDATE_DRINK",
+                            payload: {
+                              id: drink.id,
+                              field: "volumeMl",
+                              value:
+                                e.target.value === ""
+                                  ? 0
+                                  : Number(e.target.value),
+                            },
+                          })
+                        }
+                        className={`rounded-2xl border px-4 py-3 outline-none ${
+                          drink.locked
+                            ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
+                            : "border-slate-300 bg-white focus:border-slate-500"
+                        }`}
+                      />
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        度数(%)
+                      </span>
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={drink.abv}
+                        disabled={drink.locked}
+                        onChange={(e) =>
+                          dispatch({
+                            type: "UPDATE_DRINK",
+                            payload: {
+                              id: drink.id,
+                              field: "abv",
+                              value: numberValue(e.target.value),
+                            },
+                          })
+                        }
+                        className={`rounded-2xl border px-4 py-3 outline-none ${
+                          drink.locked
+                            ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
+                            : "border-slate-300 bg-white focus:border-slate-500"
+                        }`}
+                      />
+                    </label>
+
+                    <label className="grid gap-2">
+                      <span className="text-sm font-medium text-slate-700">
+                        本数・杯数
+                      </span>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={drink.locked}
+                          onClick={() =>
+                            dispatch({
+                              type: "UPDATE_DRINK",
+                              payload: {
+                                id: drink.id,
+                                field: "count",
+                                value: Math.max(
+                                  0,
+                                  Number(drink.count || 0) - 1
+                                ),
+                              },
+                            })
+                          }
+                          className={`h-12 w-10 rounded-2xl border text-xl ${
+                            drink.locked
+                              ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-400"
+                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          −
+                        </button>
+
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={drink.count === 0 ? "" : String(drink.count)}
+                          disabled={drink.locked}
+                          onChange={(e) =>
+                            dispatch({
+                              type: "UPDATE_DRINK",
+                              payload: {
+                                id: drink.id,
+                                field: "count",
+                                value: intValueFromText(e.target.value),
+                              },
+                            })
+                          }
+                          className={`min-w-0 flex-1 rounded-2xl border px-3 py-3 outline-none ${
+                            drink.locked
+                              ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
+                              : "border-slate-300 bg-white focus:border-slate-500"
+                          }`}
+                        />
+
+                        <button
+                          type="button"
+                          disabled={drink.locked}
+                          onClick={() =>
+                            dispatch({
+                              type: "UPDATE_DRINK",
+                              payload: {
+                                id: drink.id,
+                                field: "count",
+                                value: Number(drink.count || 0) + 1,
+                              },
+                            })
+                          }
+                          className={`h-12 w-10 rounded-2xl border text-xl ${
+                            drink.locked
+                              ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-400"
+                              : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                          }`}
+                        >
+                          ＋
+                        </button>
+                      </div>
+                    </label>
+                  </div>
+
+                  <p
+                    className={`mt-3 text-sm ${
+                      drink.locked ? "text-amber-700" : "text-slate-600"
+                    }`}
+                  >
+                    このお酒の純アルコール量:{" "}
+                    <span className="font-semibold text-slate-900">
+                      {pureAlcoholG} g
+                    </span>
+                  </p>
+                </div>
+              );
+            })}
           </div>
         </section>
 
@@ -733,9 +1018,9 @@ export default function Page() {
             </div>
 
             <div className="rounded-3xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">飲酒時間</p>
+              <p className="text-sm text-slate-500">飲酒中に分解した想定量</p>
               <p className="mt-2 text-2xl font-bold">
-                {summary.drinkingDurationHours} 時間
+                {summary.metabolizedDuringDrinkingG} g
               </p>
             </div>
 
@@ -747,31 +1032,41 @@ export default function Page() {
             </div>
 
             <div className="rounded-3xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">飲酒中に分解した想定量</p>
+              <p className="text-sm text-slate-500">飲酒時間</p>
               <p className="mt-2 text-2xl font-bold">
-                {summary.metabolizedDuringDrinkingG} g
+                {summary.drinkingDurationHours} 時間
               </p>
             </div>
 
             <div className="rounded-3xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">飲み終わり時点の推定残量</p>
+
+              <p className="mt-2 text-sm text-slate-600">
+                {formatDateWithDay(state.date)}
+              </p>
+
               <p className="mt-2 text-2xl font-bold">
                 {summary.remainingAtEndG} g
               </p>
-            </div>
 
-            <div className="rounded-3xl bg-slate-50 p-4">
-              <p className="text-sm text-slate-500">現在時刻</p>
-              <p className="mt-2 text-2xl font-bold">{formatClock(now)}</p>
-              <p className="mt-2 text-sm text-slate-600">
-                この時刻で自動計算しています
-              </p>
+              <p className="mt-2 text-sm text-slate-600">{state.endTime}時点</p>
             </div>
 
             <div className="rounded-3xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">現在の推定残量</p>
+              <p
+                className="mt-2 text-sm text-slate-600"
+                suppressHydrationWarning
+              >
+                {currentRemainingLabelDate}
+              </p>
               <p className="mt-2 text-2xl font-bold">{liveRemainingNowG} g</p>
-              <p className="mt-2 text-sm text-slate-600">現在時刻ベース</p>
+              <p
+                className="mt-2 text-sm text-slate-600"
+                suppressHydrationWarning
+              >
+                {now ? `${formatClock(now)} 時点` : "--:--:-- 時点"}
+              </p>
             </div>
 
             <div className="rounded-3xl bg-slate-50 p-4">
@@ -782,15 +1077,33 @@ export default function Page() {
               <p className="mt-2 text-sm text-slate-600">飲み終わり後</p>
             </div>
 
-            <div className="rounded-3xl bg-slate-50 p-4 sm:col-span-2 xl:col-span-1">
+            <div className="rounded-3xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">抜けるまでの目安</p>
+
+              <p className="mt-2 text-sm text-slate-600">{zeroAtLabelDate}</p>
               <p className="mt-2 text-2xl font-bold">{liveHoursToZero} 時間</p>
               <p className="mt-2 text-sm text-slate-600">
                 {formatTimeOnly(zeroAtLive)}ごろ
               </p>
             </div>
 
-            <div className="rounded-3xl bg-amber-50 p-4 sm:col-span-2">
+            <div className="rounded-3xl bg-slate-50 p-4">
+              <p className="text-sm text-slate-500">現在時刻</p>
+              <p
+                className="mt-2 text-sm font-medium text-slate-600"
+                suppressHydrationWarning
+              >
+                {now ? formatDateWithWeekday(now) : "----/--/-- (-)"}
+              </p>
+              <p className="mt-2 text-2xl font-bold" suppressHydrationWarning>
+                {now ? formatClock(now) : "--:--:--"}
+              </p>
+              <p className="mt-2 text-sm text-slate-600">
+                この時刻で自動計算しています
+              </p>
+            </div>
+
+            <div className="rounded-3xl bg-amber-50 p-4 sm:col-span-2 xl:col-span-3">
               <p className="text-sm text-amber-700">参考値</p>
               <p className="mt-2 text-lg font-bold text-amber-900">
                 推定BAC風の参考値: {liveEstimatedBac}
@@ -808,7 +1121,12 @@ export default function Page() {
             <button
               type="button"
               onClick={handleSaveHistory}
-              className="rounded-2xl bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700"
+              disabled={!canSaveHistory}
+              className={`rounded-2xl px-4 py-2 text-sm font-medium ${
+                canSaveHistory
+                  ? "bg-blue-600 text-white hover:bg-blue-700"
+                  : "cursor-not-allowed bg-slate-300 text-white"
+              }`}
             >
               履歴に保存
             </button>
@@ -821,6 +1139,12 @@ export default function Page() {
               入力だけリセット
             </button>
           </div>
+
+          {!canSaveHistory ? (
+            <p className="mt-3 text-sm text-slate-500">
+              固定中のお酒があると保存できます。
+            </p>
+          ) : null}
         </section>
 
         <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
@@ -833,21 +1157,21 @@ export default function Page() {
           ) : (
             <div className="mt-4 grid gap-4">
               {state.histories.map((item) => {
-                const currentRemainingNow = calcRemainingNowByClock(
+                const historyNowRemaining = calcRemainingNowByClock(
                   item.remainingAtEndG,
                   item.metabolismGPerHour,
                   item.startTime,
                   item.endTime,
-                  now
+                  safeNow
                 );
 
-                const tone = getHistoryToneByRemaining(currentRemainingNow);
+                const tone = getHistoryToneByRemaining(historyNowRemaining);
                 const zeroAt = calcZeroAtByClock(
                   item.remainingAtEndG,
                   item.metabolismGPerHour,
                   item.startTime,
                   item.endTime,
-                  now
+                  safeNow
                 );
 
                 return (
@@ -873,7 +1197,8 @@ export default function Page() {
                           {item.sex === "male" ? "男性" : "女性"}
                         </p>
                         <p>
-                          飲酒時間 {item.startTime} 〜 {item.endTime}
+                          飲酒時間 {formatDateDisplay(item.date)}{" "}
+                          {item.startTime} 〜 {item.endTime}
                         </p>
                         <p>飲んだ種類数: {item.drinks.length}</p>
 
@@ -891,8 +1216,17 @@ export default function Page() {
                             <p className="text-xs text-slate-500">
                               飲み終わり時点の推定残量
                             </p>
+
+                            <p className="mt-1 text-xs text-slate-600">
+                              {formatDateWithDay(item.date)}
+                            </p>
+
                             <p className="mt-1 font-bold text-slate-900">
                               {item.remainingAtEndG} g
+                            </p>
+
+                            <p className="mt-1 text-xs text-slate-600">
+                              {item.endTime}時点
                             </p>
                           </div>
 
@@ -900,11 +1234,24 @@ export default function Page() {
                             <p className="text-xs text-slate-500">
                               現在の推定残量
                             </p>
-                            <p className={`mt-1 font-bold ${tone.accent}`}>
-                              {currentRemainingNow} g
+                            <p
+                              className="mt-1 text-xs text-slate-600"
+                              suppressHydrationWarning
+                            >
+                              {now
+                                ? formatDateWithWeekday(now)
+                                : "----/--/-- (-)"}
                             </p>
-                            <p className="mt-1 text-xs text-slate-600">
-                              {formatClock(now)} 時点
+                            <p className={`mt-1 font-bold ${tone.accent}`}>
+                              {historyNowRemaining} g
+                            </p>
+                            <p
+                              className="mt-1 text-xs text-slate-600"
+                              suppressHydrationWarning
+                            >
+                              {now
+                                ? `${formatClock(now)} 時点`
+                                : "--:--:-- 時点"}
                             </p>
                           </div>
 
@@ -921,11 +1268,14 @@ export default function Page() {
                             <p className="text-xs text-slate-500">
                               抜けるまでの目安
                             </p>
+                            <p className="mt-1 text-xs text-slate-600">
+                              {formatDateWithWeekday(zeroAt)}
+                            </p>
                             <p className="mt-1 font-bold text-slate-900">
                               {item.metabolismGPerHour > 0
                                 ? Number(
                                     (
-                                      currentRemainingNow /
+                                      historyNowRemaining /
                                       item.metabolismGPerHour
                                     ).toFixed(1)
                                   )

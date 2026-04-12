@@ -1,6 +1,6 @@
 {
-  "name": "alcohol-pwa",
-  "short_name": "alcohol-pwa",
+  "name": "お酒確認アプリ",
+  "short_name": "お酒確認アプリ",
   "description": "飲酒量と残アルコール量の簡易確認アプリ",
   "start_url": "/",
   "display": "standalone",

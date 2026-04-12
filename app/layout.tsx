@@ -3,13 +3,13 @@ import "./globals.css";
 import { AppProvider } from "@/lib/state";
 
 export const metadata: Metadata = {
-  title: "alcohol-pwa",
+  title: "お酒確認アプリ",
   description: "飲酒量と残アルコール量の簡易確認アプリ",
   manifest: "/manifest.webmanifest",
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
-    title: "alcohol-pwa",
+    title: "お酒確認アプリ",
   },
   icons: {
     icon: [

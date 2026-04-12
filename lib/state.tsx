@@ -1,4 +1,3 @@
-// lib/state.tsx
 "use client";
 
 import {
@@ -25,6 +24,7 @@ export type DrinkInput = {
 export type HistoryItem = {
   id: string;
   createdAt: string;
+  date: string;
   weightKg: number;
   sex: Sex;
   startTime: string;
@@ -40,6 +40,7 @@ export type HistoryItem = {
 };
 
 export type AppState = {
+  date: string;
   weightKg: number;
   sex: Sex;
   startTime: string;
@@ -51,6 +52,7 @@ export type AppState = {
 
 type Action =
   | { type: "INIT"; payload: AppState }
+  | { type: "SET_DATE"; payload: string }
   | { type: "SET_WEIGHT"; payload: number }
   | { type: "SET_SEX"; payload: Sex }
   | { type: "SET_START_TIME"; payload: string }
@@ -72,6 +74,44 @@ type Action =
   | { type: "LOAD_HISTORY"; payload: { id: string } }
   | { type: "RESET_ALL" };
 
+function todayString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, "0");
+  const d = String(now.getDate()).padStart(2, "0");
+  return `${y}-${m}-${d}`;
+}
+
+function normalizeDateString(value: string) {
+  if (!value || typeof value !== "string") {
+    return todayString();
+  }
+
+  const trimmed = value.trim();
+
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return trimmed;
+  }
+
+  const slashOrMixed = trimmed.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})/);
+  if (slashOrMixed) {
+    const [, y, m, d] = slashOrMixed;
+    return `${y}-${String(Number(m)).padStart(2, "0")}-${String(
+      Number(d)
+    ).padStart(2, "0")}`;
+  }
+
+  const parsed = new Date(trimmed);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getFullYear();
+    const m = String(parsed.getMonth() + 1).padStart(2, "0");
+    const d = String(parsed.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  return todayString();
+}
+
 function createDefaultDrink(): DrinkInput {
   return {
     id: crypto.randomUUID(),
@@ -87,11 +127,61 @@ function cloneDrink(drink: DrinkInput): DrinkInput {
   return {
     ...drink,
     id: crypto.randomUUID(),
-    locked: false,
+    locked: true,
   };
 }
 
+function sanitizeDrink(drink: DrinkInput): DrinkInput {
+  return {
+    ...drink,
+    name: typeof drink.name === "string" ? drink.name : "ビール",
+    volumeMl:
+      typeof drink.volumeMl === "number" && Number.isFinite(drink.volumeMl)
+        ? Math.max(0, Math.round(drink.volumeMl))
+        : 0,
+    abv:
+      typeof drink.abv === "number" && Number.isFinite(drink.abv)
+        ? Math.max(0, Number(drink.abv))
+        : 0,
+    count:
+      typeof drink.count === "number" && Number.isFinite(drink.count)
+        ? Math.max(0, Math.round(drink.count))
+        : 0,
+    locked: Boolean(drink.locked),
+  };
+}
+
+function ensureSingleUnlocked(drinks: DrinkInput[]): DrinkInput[] {
+  if (!Array.isArray(drinks) || drinks.length === 0) {
+    return [createDefaultDrink()];
+  }
+
+  const normalized = drinks.map(sanitizeDrink);
+  const unlocked = normalized.filter((drink) => !drink.locked);
+
+  if (unlocked.length <= 1) {
+    return normalized;
+  }
+
+  const keepUnlockedId = unlocked[unlocked.length - 1]?.id;
+
+  return normalized.map((drink) =>
+    drink.id === keepUnlockedId
+      ? { ...drink, locked: false }
+      : { ...drink, locked: true }
+  );
+}
+
+function ensureAtLeastOneDrink(drinks: DrinkInput[]): DrinkInput[] {
+  return drinks.length > 0 ? drinks : [createDefaultDrink()];
+}
+
+function normalizeDrinks(drinks: DrinkInput[]): DrinkInput[] {
+  return ensureAtLeastOneDrink(ensureSingleUnlocked(drinks));
+}
+
 const initialState: AppState = {
+  date: todayString(),
   weightKg: 60,
   sex: "male",
   startTime: "19:00",
@@ -101,17 +191,13 @@ const initialState: AppState = {
   histories: [],
 };
 
-function normalizeDrink(drink: DrinkInput): DrinkInput {
-  return {
-    ...drink,
-    locked: Boolean(drink.locked),
-  };
-}
-
 function normalizeHistoryItem(item: HistoryItem): HistoryItem {
   return {
     ...item,
-    drinks: Array.isArray(item.drinks) ? item.drinks.map(normalizeDrink) : [],
+    date: normalizeDateString(item.date),
+    drinks: Array.isArray(item.drinks)
+      ? item.drinks.map((drink) => ({ ...sanitizeDrink(drink), locked: true }))
+      : [],
     remainingAtEndG:
       typeof item.remainingAtEndG === "number" &&
       Number.isFinite(item.remainingAtEndG)
@@ -128,9 +214,26 @@ function normalizeHistoryItem(item: HistoryItem): HistoryItem {
 function normalizeState(state: AppState): AppState {
   return {
     ...state,
-    drinks: Array.isArray(state.drinks)
-      ? state.drinks.map(normalizeDrink)
-      : [createDefaultDrink()],
+    date: normalizeDateString(state.date),
+    weightKg:
+      typeof state.weightKg === "number" && Number.isFinite(state.weightKg)
+        ? Math.max(30, Math.min(120, state.weightKg))
+        : initialState.weightKg,
+    sex: state.sex === "female" ? "female" : "male",
+    startTime:
+      typeof state.startTime === "string" && state.startTime
+        ? state.startTime
+        : initialState.startTime,
+    endTime:
+      typeof state.endTime === "string" && state.endTime
+        ? state.endTime
+        : initialState.endTime,
+    elapsedHoursAfterEnd:
+      typeof state.elapsedHoursAfterEnd === "number" &&
+      Number.isFinite(state.elapsedHoursAfterEnd)
+        ? Math.max(0, Math.min(48, state.elapsedHoursAfterEnd))
+        : 0,
+    drinks: normalizeDrinks(Array.isArray(state.drinks) ? state.drinks : []),
     histories: Array.isArray(state.histories)
       ? state.histories.map(normalizeHistoryItem)
       : [],
@@ -141,6 +244,12 @@ function reducer(state: AppState, action: Action): AppState {
   switch (action.type) {
     case "INIT":
       return normalizeState(action.payload);
+
+    case "SET_DATE":
+      return {
+        ...state,
+        date: normalizeDateString(action.payload),
+      };
 
     case "SET_WEIGHT":
       return {
@@ -176,27 +285,36 @@ function reducer(state: AppState, action: Action): AppState {
           : state.elapsedHoursAfterEnd,
       };
 
-    case "ADD_DRINK":
-      return {
-        ...state,
-        drinks: [
-          ...state.drinks.map((drink) => ({ ...drink, locked: true })),
-          createDefaultDrink(),
-        ],
-      };
+    case "ADD_DRINK": {
+      const hasUnlocked = state.drinks.some((drink) => !drink.locked);
+      if (hasUnlocked) {
+        return {
+          ...state,
+          drinks: normalizeDrinks(state.drinks),
+        };
+      }
 
-    case "UPDATE_DRINK":
       return {
         ...state,
-        drinks: state.drinks.map((drink) =>
-          drink.id === action.payload.id
-            ? ({
-                ...drink,
-                [action.payload.field]: action.payload.value,
-              } as DrinkInput)
-            : drink
-        ),
+        drinks: normalizeDrinks([...state.drinks, createDefaultDrink()]),
       };
+    }
+
+    case "UPDATE_DRINK": {
+      const next = state.drinks.map((drink) =>
+        drink.id === action.payload.id
+          ? ({
+              ...drink,
+              [action.payload.field]: action.payload.value,
+            } as DrinkInput)
+          : drink
+      );
+
+      return {
+        ...state,
+        drinks: normalizeDrinks(next),
+      };
+    }
 
     case "DELETE_DRINK": {
       const next = state.drinks.filter(
@@ -205,19 +323,52 @@ function reducer(state: AppState, action: Action): AppState {
 
       return {
         ...state,
-        drinks: next.length > 0 ? next : [createDefaultDrink()],
+        drinks: normalizeDrinks(next),
       };
     }
 
-    case "TOGGLE_DRINK_LOCK":
+    case "TOGGLE_DRINK_LOCK": {
+      const target = state.drinks.find(
+        (drink) => drink.id === action.payload.id
+      );
+      if (!target) return state;
+
+      if (target.locked) {
+        const unlockedExists = state.drinks.some((drink) => !drink.locked);
+        if (unlockedExists) {
+          return {
+            ...state,
+            drinks: normalizeDrinks(
+              state.drinks.map((drink) =>
+                drink.id === action.payload.id
+                  ? { ...drink, locked: true }
+                  : drink
+              )
+            ),
+          };
+        }
+
+        return {
+          ...state,
+          drinks: normalizeDrinks(
+            state.drinks.map((drink) =>
+              drink.id === action.payload.id
+                ? { ...drink, locked: false }
+                : drink
+            )
+          ),
+        };
+      }
+
       return {
         ...state,
-        drinks: state.drinks.map((drink) =>
-          drink.id === action.payload.id
-            ? { ...drink, locked: !drink.locked }
-            : drink
+        drinks: normalizeDrinks(
+          state.drinks.map((drink) =>
+            drink.id === action.payload.id ? { ...drink, locked: true } : drink
+          )
         ),
       };
+    }
 
     case "ADD_HISTORY":
       return {
@@ -241,6 +392,7 @@ function reducer(state: AppState, action: Action): AppState {
 
       return {
         ...state,
+        date: normalizeDateString(target.date),
         weightKg: target.weightKg,
         sex: target.sex,
         startTime: target.startTime,
