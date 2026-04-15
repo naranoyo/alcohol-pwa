@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useApp } from "@/lib/state";
-import { calculateAlcoholSummary, formatDateWithDay } from "@/lib/alcohol";
+import { calculateAlcoholSummary } from "@/lib/alcohol";
 
 type PresetDrink = {
   name: string;
@@ -76,6 +76,9 @@ type PresetOption = {
   preset: PresetDrink;
 };
 
+const START_TIME_QUICK_OPTIONS = ["18:00", "19:00", "20:00", "21:00"];
+const END_TIME_QUICK_OPTIONS = ["21:00", "22:00", "23:00", "00:00"];
+
 function numberValue(value: string) {
   const n = Number(value);
   return Number.isFinite(n) ? n : 0;
@@ -102,6 +105,27 @@ function normalizeDateForInput(value: string) {
   return `${y}-${String(Number(m)).padStart(2, "0")}-${String(
     Number(d)
   ).padStart(2, "0")}`;
+}
+
+function formatDateToInputValue(date: Date) {
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function formatTimeToInputValue(date: Date) {
+  const hh = String(date.getHours()).padStart(2, "0");
+  const mm = String(date.getMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+function formatDatePlain(value: string) {
+  if (!value) return "";
+  const normalized = normalizeDateForInput(value);
+  if (!normalized) return "";
+  const [yyyy, mm, dd] = normalized.split("-");
+  return `${Number(yyyy)}/${Number(mm)}/${Number(dd)}`;
 }
 
 function presetLabel(item: PresetDrink) {
@@ -275,10 +299,32 @@ function getHistoryToneByRemaining(remainingNowG: number) {
   };
 }
 
+function CalendarIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-6 w-6 text-slate-700"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+      <line x1="16" y1="2" x2="16" y2="6" />
+      <line x1="8" y1="2" x2="8" y2="6" />
+      <line x1="3" y1="10" x2="21" y2="10" />
+    </svg>
+  );
+}
+
+type DateInputWithPicker = HTMLInputElement & {
+  showPicker?: () => void;
+};
+
 export default function Page() {
   const { state, dispatch } = useApp();
-
-  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   const [activeCategory, setActiveCategory] = useState<string>(
     DRINK_CATEGORIES[0].key
@@ -287,6 +333,8 @@ export default function Page() {
     string | null
   >(null);
   const [now, setNow] = useState<Date | null>(null);
+
+  const dateInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const tick = () => {
@@ -403,6 +451,18 @@ export default function Page() {
     return zeroAtLive ? formatDateWithWeekday(zeroAtLive) : "----/--/-- (-)";
   }, [zeroAtLive]);
 
+  const handleOpenDatePicker = () => {
+    const input = dateInputRef.current as DateInputWithPicker | null;
+    if (!input) return;
+
+    if (typeof input.showPicker === "function") {
+      input.showPicker();
+    } else {
+      input.focus();
+      input.click();
+    }
+  };
+
   const handleAddDrink = () => {
     if (currentEditingDrink) return;
     dispatch({ type: "ADD_DRINK" });
@@ -516,8 +576,8 @@ export default function Page() {
         <section className="rounded-3xl bg-white p-5 shadow-sm ring-1 ring-slate-200">
           <h2 className="text-lg font-bold">基本情報</h2>
 
-          <div className="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            <label className="grid gap-2 sm:col-span-2 lg:col-span-3">
+          <div className="mt-5 grid gap-5">
+            <label className="grid gap-2">
               <span className="text-sm font-medium text-slate-700">
                 体重: {state.weightKg} kg
               </span>
@@ -541,7 +601,7 @@ export default function Page() {
                     key={w}
                     type="button"
                     onClick={() => dispatch({ type: "SET_WEIGHT", payload: w })}
-                    className={`rounded-full border px-3 py-1 text-sm ${
+                    className={`rounded-full border px-3 py-1.5 text-sm ${
                       state.weightKg === w
                         ? "border-blue-600 bg-blue-600 text-white"
                         : "border-slate-300 bg-white text-slate-700"
@@ -553,109 +613,205 @@ export default function Page() {
               </div>
             </label>
 
-            <label className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">性別</span>
-              <select
-                value={state.sex}
-                onChange={(e) =>
-                  dispatch({
-                    type: "SET_SEX",
-                    payload: e.target.value as "male" | "female",
-                  })
-                }
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-500"
-              >
-                <option value="male">男性</option>
-                <option value="female">女性</option>
-              </select>
-            </label>
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-3">
+                <span className="text-sm font-medium text-slate-700">性別</span>
 
-            <label className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">日付</span>
+                <div className="flex min-h-42 flex-col rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <select
+                    value={state.sex}
+                    onChange={(e) =>
+                      dispatch({
+                        type: "SET_SEX",
+                        payload: e.target.value as "male" | "female",
+                      })
+                    }
+                    className="h-14 w-full rounded-2xl border border-slate-300 bg-white px-4 text-base outline-none focus:border-slate-500"
+                  >
+                    <option value="male">男性</option>
+                    <option value="female">女性</option>
+                  </select>
 
-              <div className="relative">
-                <button
-                  type="button"
-                  onClick={() => dateInputRef.current?.showPicker?.()}
-                  className="flex w-full items-center justify-between rounded-2xl border border-slate-300 bg-white px-4 py-3 text-left outline-none hover:border-slate-500"
-                >
-                  <span className="text-slate-900">
-                    {formatDateWithDay(state.date)}
-                  </span>
-                  <span className="text-xl leading-none">📅</span>
-                </button>
+                  <div className="mt-3 flex-1" />
 
-                <input
-                  ref={dateInputRef}
-                  type="date"
-                  value={normalizeDateForInput(state.date)}
-                  onChange={(e) =>
-                    dispatch({
-                      type: "SET_DATE",
-                      payload: e.target.value,
-                    })
-                  }
-                  className="pointer-events-none absolute inset-0 opacity-0"
-                  tabIndex={-1}
-                />
+                  <p className="text-sm text-slate-500">
+                    体格差の参考計算に使います
+                  </p>
+                </div>
               </div>
-            </label>
 
-            <div className="hidden lg:block" />
+              <div className="grid gap-3">
+                <span className="text-sm font-medium text-slate-700">日付</span>
 
-            <label className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">
-                開始時刻
-              </span>
-              <input
-                type="time"
-                value={state.startTime}
-                onChange={(e) =>
-                  dispatch({
-                    type: "SET_START_TIME",
-                    payload: e.target.value,
-                  })
-                }
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-500"
-              />
-            </label>
+                <div className="flex min-h-42 flex-col rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <div className="relative">
+                    <input
+                      ref={dateInputRef}
+                      type="date"
+                      value={normalizeDateForInput(state.date)}
+                      onChange={(e) =>
+                        dispatch({
+                          type: "SET_DATE",
+                          payload: e.target.value,
+                        })
+                      }
+                      className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+                      tabIndex={-1}
+                      aria-hidden="true"
+                    />
 
-            <label className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">
-                終了時刻
-              </span>
-              <input
-                type="time"
-                value={state.endTime}
-                onChange={(e) =>
-                  dispatch({
-                    type: "SET_END_TIME",
-                    payload: e.target.value,
-                  })
-                }
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-500"
-              />
-            </label>
+                    <button
+                      type="button"
+                      onClick={handleOpenDatePicker}
+                      aria-label="日付を選択"
+                      className="relative z-10 flex h-14 w-full items-center justify-between rounded-2xl border border-slate-300 bg-white px-4 text-left outline-none transition hover:bg-slate-50"
+                    >
+                      <span className="text-base text-slate-900">
+                        {formatDatePlain(state.date)}
+                      </span>
+                      <CalendarIcon />
+                    </button>
+                  </div>
 
-            <label className="grid gap-2">
-              <span className="text-sm font-medium text-slate-700">
-                飲み終わってからの経過時間(時間)
-              </span>
-              <input
-                type="number"
-                min={0}
-                max={48}
-                step={0.5}
-                value={state.elapsedHoursAfterEnd}
-                onChange={(e) =>
-                  dispatch({
-                    type: "SET_ELAPSED_AFTER_END",
-                    payload: numberValue(e.target.value),
-                  })
-                }
-                className="rounded-2xl border border-slate-300 bg-white px-4 py-3 outline-none focus:border-slate-500"
-              />
-            </label>
+                  <div className="mt-3 flex-1" />
+
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_DATE",
+                          payload: formatDateToInputValue(new Date()),
+                        })
+                      }
+                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      今日
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        const yesterday = new Date();
+                        yesterday.setDate(yesterday.getDate() - 1);
+
+                        dispatch({
+                          type: "SET_DATE",
+                          payload: formatDateToInputValue(yesterday),
+                        });
+                      }}
+                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      昨日
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 lg:grid-cols-2">
+              <div className="grid gap-3">
+                <span className="text-sm font-medium text-slate-700">
+                  開始時刻
+                </span>
+
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <input
+                    type="time"
+                    value={state.startTime}
+                    onChange={(e) =>
+                      dispatch({
+                        type: "SET_START_TIME",
+                        payload: e.target.value,
+                      })
+                    }
+                    className="h-14 w-full rounded-2xl border border-slate-300 bg-white px-4 text-base outline-none focus:border-slate-500"
+                  />
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_START_TIME",
+                          payload: formatTimeToInputValue(new Date()),
+                        })
+                      }
+                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      今
+                    </button>
+
+                    {START_TIME_QUICK_OPTIONS.map((time) => (
+                      <button
+                        key={time}
+                        type="button"
+                        onClick={() =>
+                          dispatch({
+                            type: "SET_START_TIME",
+                            payload: time,
+                          })
+                        }
+                        className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        {time}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid gap-3">
+                <span className="text-sm font-medium text-slate-700">
+                  終了時刻
+                </span>
+
+                <div className="rounded-3xl border border-slate-200 bg-slate-50 p-4">
+                  <input
+                    type="time"
+                    value={state.endTime}
+                    onChange={(e) =>
+                      dispatch({
+                        type: "SET_END_TIME",
+                        payload: e.target.value,
+                      })
+                    }
+                    className="h-14 w-full rounded-2xl border border-slate-300 bg-white px-4 text-base outline-none focus:border-slate-500"
+                  />
+
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        dispatch({
+                          type: "SET_END_TIME",
+                          payload: formatTimeToInputValue(new Date()),
+                        })
+                      }
+                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      今
+                    </button>
+
+                    {END_TIME_QUICK_OPTIONS.map((time) => (
+                      <button
+                        key={time}
+                        type="button"
+                        onClick={() =>
+                          dispatch({
+                            type: "SET_END_TIME",
+                            payload: time,
+                          })
+                        }
+                        className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      >
+                        {time}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
           </div>
         </section>
 
@@ -791,6 +947,19 @@ export default function Page() {
                     </div>
 
                     <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={handleAddDrink}
+                        disabled={!!currentEditingDrink}
+                        className={`rounded-2xl px-3 py-1.5 text-sm font-medium ${
+                          currentEditingDrink
+                            ? "cursor-not-allowed bg-slate-300 text-white"
+                            : "bg-blue-600 text-white hover:bg-blue-700"
+                        }`}
+                      >
+                        追加
+                      </button>
+
                       <button
                         type="button"
                         onClick={() =>
@@ -1040,15 +1209,12 @@ export default function Page() {
 
             <div className="rounded-3xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">飲み終わり時点の推定残量</p>
-
               <p className="mt-2 text-sm text-slate-600">
-                {formatDateWithDay(state.date)}
+                {formatDatePlain(state.date)}
               </p>
-
               <p className="mt-2 text-2xl font-bold">
                 {summary.remainingAtEndG} g
               </p>
-
               <p className="mt-2 text-sm text-slate-600">{state.endTime}時点</p>
             </div>
 
@@ -1079,7 +1245,6 @@ export default function Page() {
 
             <div className="rounded-3xl bg-slate-50 p-4">
               <p className="text-sm text-slate-500">抜けるまでの目安</p>
-
               <p className="mt-2 text-sm text-slate-600">{zeroAtLabelDate}</p>
               <p className="mt-2 text-2xl font-bold">{liveHoursToZero} 時間</p>
               <p className="mt-2 text-sm text-slate-600">
@@ -1216,15 +1381,12 @@ export default function Page() {
                             <p className="text-xs text-slate-500">
                               飲み終わり時点の推定残量
                             </p>
-
                             <p className="mt-1 text-xs text-slate-600">
-                              {formatDateWithDay(item.date)}
+                              {formatDatePlain(item.date)}
                             </p>
-
                             <p className="mt-1 font-bold text-slate-900">
                               {item.remainingAtEndG} g
                             </p>
-
                             <p className="mt-1 text-xs text-slate-600">
                               {item.endTime}時点
                             </p>
