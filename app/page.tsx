@@ -347,6 +347,28 @@ export default function Page() {
     return () => window.clearInterval(id);
   }, []);
 
+  const isTouchDevice = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    return (
+      /iPhone|iPad|iPod|Android/i.test(window.navigator.userAgent) ||
+      window.matchMedia("(pointer: coarse)").matches
+    );
+  }, []);
+
+  const todayInputValue = useMemo(() => {
+    return formatDateToInputValue(new Date());
+  }, []);
+
+  const yesterdayInputValue = useMemo(() => {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return formatDateToInputValue(yesterday);
+  }, []);
+
+  const isTodaySelected = normalizeDateForInput(state.date) === todayInputValue;
+  const isYesterdaySelected =
+    normalizeDateForInput(state.date) === yesterdayInputValue;
+
   const safeNow = useMemo(() => now ?? new Date(), [now]);
 
   const lockedDrinks = useMemo(
@@ -644,9 +666,8 @@ export default function Page() {
                 <span className="text-sm font-medium text-slate-700">日付</span>
 
                 <div className="flex min-h-42 flex-col rounded-3xl border border-slate-200 bg-slate-50 p-4">
-                  <div className="relative">
+                  {isTouchDevice ? (
                     <input
-                      ref={dateInputRef}
                       type="date"
                       value={normalizeDateForInput(state.date)}
                       onChange={(e) =>
@@ -655,23 +676,38 @@ export default function Page() {
                           payload: e.target.value,
                         })
                       }
-                      className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
-                      tabIndex={-1}
-                      aria-hidden="true"
+                      className="h-14 w-full rounded-2xl border border-slate-300 bg-white px-4 text-base outline-none focus:border-slate-500"
                     />
+                  ) : (
+                    <div className="relative">
+                      <input
+                        ref={dateInputRef}
+                        type="date"
+                        value={normalizeDateForInput(state.date)}
+                        onChange={(e) =>
+                          dispatch({
+                            type: "SET_DATE",
+                            payload: e.target.value,
+                          })
+                        }
+                        className="pointer-events-none absolute inset-0 h-full w-full opacity-0"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                      />
 
-                    <button
-                      type="button"
-                      onClick={handleOpenDatePicker}
-                      aria-label="日付を選択"
-                      className="relative z-10 flex h-14 w-full items-center justify-between rounded-2xl border border-slate-300 bg-white px-4 text-left outline-none transition hover:bg-slate-50"
-                    >
-                      <span className="text-base text-slate-900">
-                        {formatDatePlain(state.date)}
-                      </span>
-                      <CalendarIcon />
-                    </button>
-                  </div>
+                      <button
+                        type="button"
+                        onClick={handleOpenDatePicker}
+                        aria-label="日付を選択"
+                        className="relative z-10 flex h-14 w-full items-center justify-between rounded-2xl border border-slate-300 bg-white px-4 text-left outline-none transition hover:bg-slate-50"
+                      >
+                        <span className="text-base text-slate-900">
+                          {formatDatePlain(state.date)}
+                        </span>
+                        <CalendarIcon />
+                      </button>
+                    </div>
+                  )}
 
                   <div className="mt-3 flex-1" />
 
@@ -681,26 +717,31 @@ export default function Page() {
                       onClick={() =>
                         dispatch({
                           type: "SET_DATE",
-                          payload: formatDateToInputValue(new Date()),
+                          payload: todayInputValue,
                         })
                       }
-                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                      className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                        isTodaySelected
+                          ? "border-blue-600 bg-blue-600 text-white"
+                          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                      }`}
                     >
                       今日
                     </button>
 
                     <button
                       type="button"
-                      onClick={() => {
-                        const yesterday = new Date();
-                        yesterday.setDate(yesterday.getDate() - 1);
-
+                      onClick={() =>
                         dispatch({
                           type: "SET_DATE",
-                          payload: formatDateToInputValue(yesterday),
-                        });
-                      }}
-                      className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                          payload: yesterdayInputValue,
+                        })
+                      }
+                      className={`rounded-full border px-4 py-2 text-sm font-medium transition ${
+                        isYesterdaySelected
+                          ? "border-blue-600 bg-blue-600 text-white"
+                          : "border-slate-300 bg-white text-slate-700 hover:bg-slate-50"
+                      }`}
                     >
                       昨日
                     </button>
