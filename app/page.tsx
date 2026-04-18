@@ -1,3 +1,4 @@
+// app/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -1063,26 +1064,40 @@ export default function Page() {
                       <span className="text-sm font-medium text-slate-700">
                         量(ml)
                       </span>
+
                       <input
                         type="number"
                         inputMode="numeric"
                         min={0}
                         step={10}
-                        value={drink.volumeMl}
+                        value={
+                          drink.volumeMl === 0 ? "" : String(drink.volumeMl)
+                        }
                         disabled={drink.locked}
-                        onChange={(e) =>
+                        onChange={(e) => {
+                          const nextValue = e.target.value;
+
                           dispatch({
                             type: "UPDATE_DRINK",
                             payload: {
                               id: drink.id,
                               field: "volumeMl",
-                              value:
-                                e.target.value === ""
-                                  ? 0
-                                  : Number(e.target.value),
+                              value: nextValue === "" ? 0 : Number(nextValue),
                             },
-                          })
-                        }
+                          });
+                        }}
+                        onBlur={(e) => {
+                          if (e.target.value === "") {
+                            dispatch({
+                              type: "UPDATE_DRINK",
+                              payload: {
+                                id: drink.id,
+                                field: "volumeMl",
+                                value: 0,
+                              },
+                            });
+                          }
+                        }}
                         className={`rounded-2xl border px-4 py-3 outline-none ${
                           drink.locked
                             ? "cursor-not-allowed border-amber-200 bg-amber-50 text-slate-500"
