@@ -137,6 +137,14 @@ function presetValue(item: PresetDrink) {
   return `${item.name}__${item.volumeMl}__${item.abv}`;
 }
 
+function findPresetByName(name: string) {
+  return (
+    DRINK_CATEGORIES.flatMap((category) => category.items).find(
+      (item) => item.name === name
+    ) ?? null
+  );
+}
+
 function getAllPresetOptions(): PresetOption[] {
   return DRINK_CATEGORIES.flatMap((category) =>
     category.items.map((item) => ({
@@ -144,15 +152,6 @@ function getAllPresetOptions(): PresetOption[] {
       label: presetLabel(item),
       preset: item,
     }))
-  );
-}
-
-function findPresetByDrinkValues(name: string, volumeMl: number, abv: number) {
-  return (
-    DRINK_CATEGORIES.flatMap((category) => category.items).find(
-      (item) =>
-        item.name === name && item.volumeMl === volumeMl && item.abv === abv
-    ) ?? null
   );
 }
 
@@ -954,12 +953,7 @@ export default function Page() {
                   ? (summary.drinks[lockedIndex]?.pureAlcoholG ?? 0)
                   : 0;
 
-              const selectedPreset =
-                findPresetByDrinkValues(
-                  drink.name,
-                  drink.volumeMl,
-                  drink.abv
-                ) ?? null;
+              const selectedPreset = findPresetByName(drink.name) ?? null;
 
               const selectedPresetValue = selectedPreset
                 ? presetValue(selectedPreset)
